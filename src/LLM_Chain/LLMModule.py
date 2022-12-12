@@ -9,21 +9,26 @@ class _AbstractBaseLLMModule():
         self.appendToInput = appendToInput
 
         
-    def preprocess(self, text_input: str) -> str:
+    def preprocess(self, text_input="", **kwargs) -> str:
         return text_input
 
     def LLM_call(self, text_input: str) -> str:
         text_output = call_LLM(text_input)
         return text_input, text_output
     
-    def postprocess(self, text_input: str, text_output: str) -> str:
+    def postprocess(self, text_input: str, text_output: str) -> dict:
         if self.appendToInput:
-            return text_input + text_output
+            return {"text_input":text_input + text_output}
         else:
-            return text_output
+            return {"text_input":text_output}
+
+    def full_process(self, text_input: dict) -> dict:
+        return self.postprocess(*self.LLM_call(self.preprocess(**text_input)))
     
     def __rrshift__(self, leftText: str) -> str:
-        return self.postprocess(*self.LLM_call(self.preprocess(leftText)))
+        if isinstance(leftText, str):
+            d = {"text_input": leftText}
+        return self.full_process(d)
 
 
 class _ChainedModule(_AbstractBaseLLMModule):
@@ -47,23 +52,34 @@ class BaseLLMModule(_AbstractBaseLLMModule):
     def __rrshift__(self, leftText: Union[str, _AbstractBaseLLMModule] ) -> Union[str, _AbstractBaseLLMModule]:
         if isinstance(leftText, _AbstractBaseLLMModule):
             return _ChainedModule(leftText, self)
-        else:
+        elif isinstance(leftText, str):
             return super().__rrshift__(leftText)
+        elif isinstance(leftText, dict):
+            return super().__rrshift__(leftText)
+        
 
 
 
 class TextTemplateModule(BaseLLMModule):
 
-    def __init__(self, template: str, **kwargs) -> None:
+    def __init__(self, template: str, kwarg_priority_input=True, **kwargs) -> None:
         super().__init__(**kwargs)
         self.template = template
-        self.kwargs = kwargs
+        self.class_kwargs = kwargs
+        self.kwarg_priority_input = kwarg_priority_input
 
-    def preprocess(self, text_input: str) -> str:
-        return self.template.format(text_input, **self.kwargs)
+
+    def preprocess(self, text_input="", **kwargs) -> str:
+        cur = self.class_kwargs.copy()
+        if self.kwarg_priority_input:
+            cur.update(kwargs)
+        else:
+            kwargs.update(cur)
+            cur = kwargs
+        return self.template.format(text_input, **cur)
 
     def __call__(self, **kwds: Any) -> Any:
-        self.kwargs.update(kwds)
+        self.class_kwargs.update(kwds)
         return self
         
     @staticmethod
@@ -74,16 +90,3 @@ class TextTemplateModule(BaseLLMModule):
 
 
 
-
-if __name__=="__main__":
-    
-    template = "hallo {name} wie gehts dir? {}"
-
-    T = TextTemplateModule(template, name="Max", appendToInput=True)
-
-
-
-    B = BaseLLMModule(appendToInput=True)
-
-    print("abc">>B>>T)
-    print("abc">>B>>T(name="Moritz"))
